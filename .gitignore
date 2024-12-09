@@ -1,2 +1,5 @@
 data
 *.zip
+.vscode
+__pycache__
+train_models
