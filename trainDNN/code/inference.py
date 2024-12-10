@@ -1,4 +1,5 @@
 import os
+from datetime import datetime
 
 import pandas as pd
 import torch
@@ -75,3 +76,4 @@ class Inference():
 
         errors_df_flat['flag_list'] = errors_df_flat.loc[:, 'P1':'P' + str(len(flag_columns))].apply(lambda x: x.tolist(), axis=1).apply(lambda x: [int(i) for i in x])
         return errors_df_flat[["ID", "flag_list"]]
+        
