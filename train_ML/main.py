@@ -30,6 +30,45 @@ def get_labels(df: pd.DataFrame, window_size: int, stride: int, valid_starts: li
     labels = np.array([accident_labels[idx + window_size] for idx in valid_starts])
     return labels
 
+
+def inference_test_files(model, data: pd.DataFrame) -> pd.DataFrame:
+    """테스트 데이터에 대한 reconstruction error 계산"""
+    predictions = model.predict(data)
+    reconstruction_error = np.mean((data.values - predictions) ** 2, axis=1)
+    return reconstruction_error
+
+def detect_anomaly(model, test_directory):
+    test_files = [f for f in os.listdir(test_directory) if f.startswith("TEST") and f.endswith(".csv")]
+    results = []
+
+    for filename in tqdm(test_files, desc="Processing test files"):
+        file_path = os.path.join(test_directory, filename)
+        df = pd.read_csv(file_path)
+        file_id = filename.replace(".csv", "")
+
+        # Feature columns 추출
+        feature_columns = df.filter(regex='^P\d+$').columns.tolist()
+        test_data = df[feature_columns]
+
+        # Reconstruction error 계산
+        reconstruction_error = inference_test_files(model, test_data)
+
+        # Threshold 이상인 경우 anomaly로 플래그 설정
+        flags = (reconstruction_error > THRESHOLD).astype(int)
+        results.append({
+            "ID": file_id,
+            "flag_list": flags.tolist()
+        })
+
+    return pd.DataFrame(results)
+
+def calculate_threshold(model, train_data, percentile=98):
+    """Threshold 계산: 모델을 사용해 훈련 데이터에서 재구성 오류를 측정하고 지정된 백분위수로 임계값을 설정"""
+    reconstruction_errors = inference_test_files(model, train_data)
+    threshold = np.percentile(reconstruction_errors, percentile)
+    print(f"Calculated Threshold: {threshold}")
+    return threshold
+
 def train(save_dir, x_train, y_train, x_test, y_test):
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
@@ -142,9 +181,6 @@ def train(save_dir, x_train, y_train, x_test, y_test):
     # 최적 모델 반환 (필요시)
     return best_model_info
 
-
-
-#########################################
 if __name__ == "__main__":    
     df_A = pd.read_csv("../data/train/TRAIN_A.csv")
     df_B = pd.read_csv("../data/train/TRAIN_B.csv")
@@ -152,11 +188,13 @@ if __name__ == "__main__":
     merged_df = merge_datasets([df_A, df_B])
 
     # 학습 데이터 전처리
-    train_windows = prepare_training_data(
+    train_windows, valid_starts = prepare_training_data(
         df=merged_df,
         window_size=CFG.WINDOW_GIVEN,
         stride=CFG.STRIDE
     ) # Shape: (num_train_windows, window_size, num_features)
+
+    labels = get_labels(merged_df, valid_starts, CFG.WINDOW_GIVEN)
 
     # 윈도우 인덱스 생성
     num_total = train_windows.shape[0]
@@ -170,19 +208,10 @@ if __name__ == "__main__":
         shuffle=True
     )
 
-    # 유효한 시작 인덱스 계산
-    potential_starts = np.arange(0, len(merged_df) - CFG.WINDOW_GIVEN, CFG.STRIDE)
-    accident_labels = merged_df['anomaly'].values
-    valid_starts = [
-        idx for idx in potential_starts 
-        if (idx + CFG.WINDOW_GIVEN < len(merged_df)) and (accident_labels[idx + CFG.WINDOW_GIVEN] == 0)
-    ]
-
-    labels = get_labels(merged_df, CFG.WINDOW_GIVEN, CFG.STRIDE, valid_starts)
-
-    x_train, x_test, y_train, y_test = train_test_split(
-        train_windows, labels, test_size=CFG.TEST_SIZE, random_state=CFG.RANDOM_STATE, shuffle=True
-    )
+    x_train = train_windows[train_indices]
+    x_test = train_windows[test_indices]
+    y_train = labels[train_indices]
+    y_test = labels[test_indices]
 
     x_train = pd.DataFrame(x_train.reshape(x_train.shape[0], -1))
     x_test = pd.DataFrame(x_test.reshape(x_test.shape[0], -1))
@@ -192,3 +221,20 @@ if __name__ == "__main__":
 
     save_dir = 'train_models'
     best_model_info = train(save_dir, x_train, y_train, x_test, y_test)
+
+    # Test data anomaly detection and submission creation
+    anomaly_model = joblib.load(os.path.join(save_dir, f"{best_model_info['Model_Name']}.pkl"))
+
+    THRESHOLD = calculate_threshold(anomaly_model, x_train)
+
+    C_list = detect_anomaly(anomaly_model, test_directory="data/test/C")
+    D_list = detect_anomaly(anomaly_model, test_directory="data/test/D")
+    C_D_list = pd.concat([C_list, D_list])
+
+    sample_submission = pd.read_csv("./sample_submission.csv")
+    # 매핑된 값으로 업데이트하되, 매핑되지 않은 경우 기존 값 유지
+    flag_mapping = C_D_list.set_index("ID")["flag_list"]
+    sample_submission["flag_list"] = sample_submission["ID"].map(flag_mapping).fillna(sample_submission["flag_list"])
+
+    sample_submission.to_csv("./baseline_submission.csv", index=False)
+
