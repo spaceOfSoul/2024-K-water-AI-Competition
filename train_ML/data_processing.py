@@ -1,6 +1,6 @@
-import pandas as pd
+
 import numpy as np
-from sklearn.model_selection import train_test_split
+import pandas as pd
 
 class CFG:
     WINDOW_GIVEN = 100
@@ -26,17 +26,17 @@ def normalize_columns(data: np.ndarray) -> np.ndarray:
 def prepare_training_data(df: pd.DataFrame, window_size: int, stride: int) -> np.ndarray:
     """학습 데이터 준비 - 윈도우 단위로 분할하고 정규화"""
     # 필요한 열 추출
-    column_names = df.filter(regex='^P\\d+$').columns.tolist()
+    column_names = df.filter(regex='^P\d+$').columns.tolist()
     values = df[column_names].values.astype(np.float32)
-    accident_labels = df['anomaly'].values if 'anomaly' in df.columns else np.zeros(len(df))
+    accident_labels = df.filter(regex='_flag$').values
     
     # 윈도우 시작 인덱스 계산
     potential_starts = np.arange(0, len(df) - window_size, stride)
     
-    # 유효한 윈도우 필터링 (윈도우 마지막 다음 지점의 사고 여부가 0인 경우)
+    # 유효한 윈도우 필터링 (윈도우 마지막 다음 지점의 모든 flag가 0인 경우)
     valid_starts = [
         idx for idx in potential_starts 
-        if (idx + window_size < len(df)) and (accident_labels[idx + window_size] == 0)
+        if (idx + window_size < len(df)) and (accident_labels[idx + window_size].sum() == 0)
     ]
     
     # 유효한 윈도우 추출
@@ -50,20 +50,13 @@ def prepare_training_data(df: pd.DataFrame, window_size: int, stride: int) -> np
         normalize_columns(window) for window in windows
     ])  # 동일한 Shape 유지
     
-    return normalized_windows  # Shape: (num_windows, window_size, num_features)
+    return normalized_windows, valid_starts  # Shape: (num_windows, window_size, num_features)
 
-def prepare_inference_data(df: pd.DataFrame):
-    """추론 데이터 준비 - 단일 시퀀스 정규화"""
-    column_names = df.filter(regex='^P\\d+$').columns.tolist()
-    values = df[column_names].values.astype(np.float32)
-    normalized_values = normalize_columns(values)
-    file_ids = df['file_id'].values if 'file_id' in df.columns else None
-    return {
-        "column_names": column_names,
-        "normalized_values": normalized_values,  # Shape: (time_steps, num_features)
-        "file_ids": file_ids
-    }
+def get_labels(df: pd.DataFrame, valid_starts: list, window_size: int) -> np.ndarray:
+    """유효한 윈도우의 레이블을 추출"""
+    accident_labels = df.filter(regex='_flag$').values
+    labels = np.array([accident_labels[idx + window_size] for idx in valid_starts])
+    return labels
 
 def merge_datasets(df_list):
     return pd.concat(df_list, ignore_index=True)
-
