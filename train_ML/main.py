@@ -194,7 +194,8 @@ if __name__ == "__main__":
         stride=CFG.STRIDE
     ) # Shape: (num_train_windows, window_size, num_features)
 
-    labels = get_labels(merged_df, valid_starts, CFG.WINDOW_GIVEN)
+    labels = get_labels(merged_df, CFG.WINDOW_GIVEN, CFG.STRIDE, valid_starts)
+
 
     # 윈도우 인덱스 생성
     num_total = train_windows.shape[0]
@@ -227,11 +228,11 @@ if __name__ == "__main__":
 
     THRESHOLD = calculate_threshold(anomaly_model, x_train)
 
-    C_list = detect_anomaly(anomaly_model, test_directory="data/test/C")
-    D_list = detect_anomaly(anomaly_model, test_directory="data/test/D")
+    C_list = detect_anomaly(anomaly_model, test_directory="../data/test/C")
+    D_list = detect_anomaly(anomaly_model, test_directory="../data/test/D")
     C_D_list = pd.concat([C_list, D_list])
 
-    sample_submission = pd.read_csv("./sample_submission.csv")
+    sample_submission = pd.read_csv("../data/sample_submission.csv")
     # 매핑된 값으로 업데이트하되, 매핑되지 않은 경우 기존 값 유지
     flag_mapping = C_D_list.set_index("ID")["flag_list"]
     sample_submission["flag_list"] = sample_submission["ID"].map(flag_mapping).fillna(sample_submission["flag_list"])
